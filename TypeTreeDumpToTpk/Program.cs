@@ -44,7 +44,7 @@ namespace TypeTreeDumpToTpk
                     ClassDatabaseFile cldbRelease = ConvertUnityInfoToCldb(inf, false);
                     using (FileStream fsRelease = File.OpenWrite(Path.Combine(cldbDir, inf.Version + "_release.dat")))
                     {
-                        cldbEditor.Write(new AssetsFileWriter(fsRelease), 0, 0);
+                        cldbRelease.Write(new AssetsFileWriter(fsRelease), 0, 0);
                     }
                 }
                 catch (Exception ex)
