@@ -1,4 +1,5 @@
-﻿using AssetsTools.NET;
+﻿using AssetRipper.VersionUtilities;
+using AssetsTools.NET;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
@@ -11,40 +12,162 @@ namespace TypeTreeDumpToTpk
 {
     class Program
     {
+        CommandLineValues cliValues;
+
         static void Main(string[] args)
         {
             Console.WriteLine("TypeTreeDumpToTpk");
 
-            Console.WriteLine("downloading type tree dump repository...");
-            ZipUtil.DownloadAndUnpackZip("https://github.com/ds5678/TypeTreeDumps/archive/refs/heads/main.zip", "TypeTreeDumps");
+            Program program = new Program();
+            program.RunMain(args);
+        }
+
+        void RunMain(string[] args)
+        {
+            cliValues = new CommandLineValues(args);
+            if (!cliValues.Continue)
+            {
+                return;
+            }
+
+            if (cliValues.Command == "ttdtotpk")
+            {
+                TypeTreeDumpToCldb();
+                CldbToTpk();
+            }
+        }
+
+        string DownloadOrFindRepoDirectory()
+        {
+            string repoDir;
+            if (cliValues.RepoDownloadType == RepoDownloadType.Git)
+            {
+                Console.WriteLine("downloading type tree dump repository...");
+                ZipUtil.DownloadAndUnpackZip($"{cliValues.RepoPath}/archive/refs/heads/main.zip", "TypeTreeDumps");
+                repoDir = Path.Combine("TypeTreeDumps", "TypeTreeDumps-main"); //assumes repo is still called TypeTreeDumps
+            }
+            else
+            {
+                Console.WriteLine("using local type tree dump repository...");
+                repoDir = cliValues.RepoPath;
+            }
+            return repoDir;
+        }
+
+        //to easily lookup all versions that match
+        static string GetVersionMask(UnityVersion unityVersion, CldbVersionSkipType skipType, bool wildcard)
+        {
+            if (!wildcard)
+            {
+                if (skipType == CldbVersionSkipType.Minor)
+                    return $"{unityVersion.Major}.{unityVersion.Minor}";
+                else if (skipType == CldbVersionSkipType.Type)
+                    return $"{unityVersion.Major}.{unityVersion.Minor}{unityVersion.Type.ToLiteral()}";
+                else
+                    return unityVersion.ToString();
+            }
+            else
+            {
+                if (skipType == CldbVersionSkipType.Minor)
+                    return $"{unityVersion.Major}.{unityVersion.Minor}.*";
+                else if (skipType == CldbVersionSkipType.Type)
+                    return $"{unityVersion.Major}.{unityVersion.Minor}{unityVersion.Type.ToLiteral()}*";
+                else
+                    return unityVersion.ToString();
+            }
+        }
+
+        void TypeTreeDumpToCldb()
+        {
+            string infoJsonDir = Path.Combine(DownloadOrFindRepoDirectory(), "InfoJson");
+            string cldbDir = cliValues.CldbPath;
+
             Console.WriteLine("creating cldbs...");
-            
-            string repoDir = Path.Combine("TypeTreeDumps", "TypeTreeDumps-main");
-            string infoJsonDir = Path.Combine(repoDir, "InfoJson");
-            
-            string cldbDir = "CldbDumps";
+
+            if (Directory.Exists(cldbDir) && !IsDirectoryEmpty(cldbDir))
+            {
+                if (cliValues.CldbExistBehavior == CldbExistBehavior.Quit)
+                {
+                    Console.WriteLine("cldb dir is not empty, exiting now.");
+                    Console.WriteLine("if you want to override this, set --cldbexistbehavior");
+                    Environment.Exit(0);
+                    return;
+                }
+                else if (cliValues.CldbExistBehavior == CldbExistBehavior.Delete)
+                {
+                    Directory.Delete(cldbDir, true);
+                }
+            }
             Directory.CreateDirectory(cldbDir);
-            
+
+            List<string> latestFiles = new List<string>();
+            Dictionary<string, UnityVersion> selectedVersions = new Dictionary<string, UnityVersion>();
+
             foreach (string file in Directory.EnumerateFiles(infoJsonDir))
+            {
+                UnityVersion unityVersion = UnityVersion.Parse(Path.GetFileNameWithoutExtension(file));
+                string versionMask = GetVersionMask(unityVersion, cliValues.CldbVersionSkipType, false);
+
+                //skip unselected version types
+                if (!cliValues.CldbUnityVersionTypes.Contains(unityVersion.Type))
+                    continue;
+
+                if (cliValues.SelectedVersionLow != CommandLineValues.DEFAULT_UNITY_VERSION)
+                {
+                    if (unityVersion < cliValues.SelectedVersionLow)
+                        continue;
+                }
+                if (cliValues.SelectedVersionHigh != CommandLineValues.DEFAULT_UNITY_VERSION)
+                {
+                    if (unityVersion > cliValues.SelectedVersionHigh)
+                        continue;
+                }
+
+                if (!selectedVersions.ContainsKey(versionMask))
+                {
+                    selectedVersions[versionMask] = unityVersion;
+                }
+                else
+                {
+                    UnityVersion compareUnityVersion = selectedVersions[versionMask];
+                    if (unityVersion > compareUnityVersion)
+                    {
+                        selectedVersions[versionMask] = unityVersion;
+                    }
+                }
+            }
+
+            foreach (var versions in selectedVersions)
+            {
+                latestFiles.Add(Path.Combine(infoJsonDir, versions.Value.ToString() + ".json"));
+            }
+
+            foreach (string file in latestFiles)
             {
                 try
                 {
                     JsonTextReader r = new JsonTextReader(new StreamReader(file));
                     JsonSerializer deserializer = new JsonSerializer();
                     UnityInfo inf = (UnityInfo)deserializer.Deserialize(r, typeof(UnityInfo));
-            
+
                     Console.WriteLine($"converting {inf.Version}...");
-            
-                    ClassDatabaseFile cldbEditor = ConvertUnityInfoToCldb(inf, true);
-                    using (FileStream fsEditor = File.OpenWrite(Path.Combine(cldbDir, inf.Version + "_editor.dat")))
+
+                    if (cliValues.TpkBuildType.HasFlag(TpkBuildType.Editor))
                     {
-                        cldbEditor.Write(new AssetsFileWriter(fsEditor), 0, 0);
+                        ClassDatabaseFile cldbEditor = ConvertUnityInfoToCldb(inf, true);
+                        using (FileStream fsEditor = File.OpenWrite(Path.Combine(cldbDir, inf.Version + "_editor.dat")))
+                        {
+                            cldbEditor.Write(new AssetsFileWriter(fsEditor), 0, 0);
+                        }
                     }
-            
-                    ClassDatabaseFile cldbRelease = ConvertUnityInfoToCldb(inf, false);
-                    using (FileStream fsRelease = File.OpenWrite(Path.Combine(cldbDir, inf.Version + "_release.dat")))
+
+                    if (cliValues.TpkBuildType.HasFlag(TpkBuildType.Release))
                     {
-                        cldbRelease.Write(new AssetsFileWriter(fsRelease), 0, 0);
+                        ClassDatabaseFile cldbRelease = ConvertUnityInfoToCldb(inf, false);
+                        using (FileStream fsRelease = File.OpenWrite(Path.Combine(cldbDir, inf.Version + "_release.dat")))
+                        {
+                            cldbRelease.Write(new AssetsFileWriter(fsRelease), 0, 0);
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -52,34 +175,39 @@ namespace TypeTreeDumpToTpk
                     Console.WriteLine($"error converting {file}:\n{ex.Message}");
                 }
             }
-            
-            Console.WriteLine("building editor tpk...");
-            BuildTpk(cldbDir, "_editor");
-
-            Console.WriteLine("building release tpk...");
-            BuildTpk(cldbDir, "_release");
         }
 
-        static ClassDatabaseFile ConvertUnityInfoToCldb(UnityInfo inf, bool editor)
+        void CldbToTpk()
+        {
+            string cldbDir = cliValues.CldbPath;
+
+            if (cliValues.TpkBuildType.HasFlag(TpkBuildType.Editor))
+            {
+                Console.WriteLine("building editor tpk...");
+                BuildTpk(cldbDir, "_editor");
+            }
+
+            if (cliValues.TpkBuildType.HasFlag(TpkBuildType.Release))
+            {
+                Console.WriteLine("building release tpk...");
+                BuildTpk(cldbDir, "_release");
+            }
+        }
+
+        ClassDatabaseFile ConvertUnityInfoToCldb(UnityInfo inf, bool editor)
         {
             ClassDatabaseFile cldb = new ClassDatabaseFile();
 
-            string unityVerFul = inf.Version;
-            string[] unityVerSplit = unityVerFul.Split('.');
-            string unityVerMajor = unityVerSplit[0];
-            string unityVerMinor = unityVerSplit[1];
-            string unityVerReg = $"{unityVerMajor}.{unityVerMinor}.*";
+            UnityVersion unityVersion = UnityVersion.Parse(inf.Version);
+            string unityVerFull = unityVersion.ToString();
 
-            //Dictionary<string, uint> gblStrLookup = new Dictionary<string, uint>();
+            //this will probably be removed in a later version
+            //of tpk since we have to parse all the matched
+            //versions anyway when there are conflicts
+            string unityVerWildcard = GetVersionMask(unityVersion, cliValues.CldbVersionSkipType, true);
+
             Dictionary<string, uint> strLookup = new Dictionary<string, uint>();
             Dictionary<string, int> classLookup = new Dictionary<string, int>();
-
-            ////global strings (should be close to Type_0D.strTable)
-            //foreach (UnityString uStr in inf.Strings)
-            //{
-            //    string str = uStr.String + '\0';
-            //    gblStrLookup[uStr.String] = uStr.Index;
-            //}
 
             //className -> classId
             foreach (UnityClass uClass in inf.Classes)
@@ -162,8 +290,8 @@ namespace TypeTreeDumpToTpk
                 unityVersionCount = 2,
                 unityVersions = new string[]
                 {
-                    unityVerReg,
-                    unityVerFul
+                    unityVerWildcard,
+                    unityVerFull
                 },
                 stringTableLen = 0,
                 stringTablePos = 0
@@ -172,8 +300,10 @@ namespace TypeTreeDumpToTpk
             return cldb;
         }
 
-        static void BuildTpk(string cldbDir, string suffix)
+        void BuildTpk(string cldbDir, string suffix)
         {
+            byte compressionType = (byte)(0x80 | (int)cliValues.TpkCompressionType);
+
             ClassDatabasePackage pkg = new ClassDatabasePackage
             {
                 valid = true,
@@ -181,7 +311,7 @@ namespace TypeTreeDumpToTpk
                 {
                     magic = "CLPK",
                     fileVersion = 1,
-                    compressionType = 0x82,
+                    compressionType = compressionType, //probably useless but whatever
                     stringTableOffset = 0,
                     stringTableLenUncompressed = 0,
                     stringTableLenCompressed = 0,
@@ -210,7 +340,7 @@ namespace TypeTreeDumpToTpk
             using (FileStream pkgfs = File.OpenWrite($"classdata{suffix}.tpk"))
             using (AssetsFileWriter pkgw = new AssetsFileWriter(pkgfs))
             {
-                pkg.Write(pkgw, 1, 0x82);
+                pkg.Write(pkgw, 1, compressionType);
             }
         }
 
@@ -272,6 +402,11 @@ namespace TypeTreeDumpToTpk
         static string ReadCldbString(ClassDatabaseFileString str, byte[] stringTable)
         {
             return AssetsFileReader.ReadNullTerminatedArray(stringTable, str.str.stringTableOffset);
+        }
+
+        static bool IsDirectoryEmpty(string path)
+        {
+            return !Directory.EnumerateFileSystemEntries(path).Any();
         }
     }
 }
