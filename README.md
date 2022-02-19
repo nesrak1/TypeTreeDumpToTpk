@@ -4,7 +4,7 @@ Uses ds5678's [TypeTreeDumps repository](https://github.com/ds5678/TypeTreeDumps
 
 # How to use
 
-Run the program and it will automatically download the repository and build two tpks, one for release and one for editor. (Although they both seem to be the same right now, not sure what's up with that...) As for AssetsTools.NET, make sure you build the latest from GitHub since the NuGet version still needs to be updated.
+Run `TypeTreeDumpToTpk help` for help.
 
 # Just need the latest dumps?
 
