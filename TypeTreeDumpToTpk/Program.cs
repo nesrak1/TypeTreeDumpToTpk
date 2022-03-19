@@ -35,6 +35,10 @@ namespace TypeTreeDumpToTpk
                 TypeTreeDumpToCldb();
                 CldbToTpk();
             }
+            else if (cliValues.Command == "cldbtotpk")
+            {
+                CldbToTpk();
+            }
         }
 
         string DownloadOrFindRepoDirectory()
@@ -139,7 +143,11 @@ namespace TypeTreeDumpToTpk
 
             foreach (var versions in selectedVersions)
             {
-                latestFiles.Add(Path.Combine(infoJsonDir, versions.Value.ToString() + ".json"));
+                string versionString = versions.Value.ToString();
+                if (versions.Value.IsLess(5))
+                    versionString = versionString[0..^2];
+
+                latestFiles.Add(Path.Combine(infoJsonDir, versionString + ".json"));
             }
 
             foreach (string file in latestFiles)
@@ -154,19 +162,27 @@ namespace TypeTreeDumpToTpk
 
                     if (cliValues.TpkBuildType.HasFlag(TpkBuildType.Editor))
                     {
-                        ClassDatabaseFile cldbEditor = ConvertUnityInfoToCldb(inf, true);
-                        using (FileStream fsEditor = File.OpenWrite(Path.Combine(cldbDir, inf.Version + "_editor.dat")))
+                        string fsPath = Path.Combine(cldbDir, inf.Version + "_editor.dat");
+                        if (!File.Exists(fsPath))
                         {
-                            cldbEditor.Write(new AssetsFileWriter(fsEditor), 0, 0);
+                            ClassDatabaseFile cldbEditor = ConvertUnityInfoToCldb(inf, true);
+                            using (FileStream fsEditor = File.OpenWrite(fsPath))
+                            {
+                                cldbEditor.Write(new AssetsFileWriter(fsEditor), 0, 0);
+                            }
                         }
                     }
 
                     if (cliValues.TpkBuildType.HasFlag(TpkBuildType.Release))
                     {
-                        ClassDatabaseFile cldbRelease = ConvertUnityInfoToCldb(inf, false);
-                        using (FileStream fsRelease = File.OpenWrite(Path.Combine(cldbDir, inf.Version + "_release.dat")))
+                        string fsPath = Path.Combine(cldbDir, inf.Version + "_release.dat");
+                        if (!File.Exists(fsPath))
                         {
-                            cldbRelease.Write(new AssetsFileWriter(fsRelease), 0, 0);
+                            ClassDatabaseFile cldbRelease = ConvertUnityInfoToCldb(inf, false);
+                            using (FileStream fsRelease = File.OpenWrite(fsPath))
+                            {
+                                cldbRelease.Write(new AssetsFileWriter(fsRelease), 0, 0);
+                            }
                         }
                     }
                 }
@@ -303,6 +319,8 @@ namespace TypeTreeDumpToTpk
         void BuildTpk(string cldbDir, string suffix)
         {
             byte compressionType = (byte)(0x80 | (int)cliValues.TpkCompressionType);
+            if (compressionType == 0x80) //if no compression set
+                compressionType |= 0x20 | 0x40; //set uncompressed cldb/database flags
 
             ClassDatabasePackage pkg = new ClassDatabasePackage
             {

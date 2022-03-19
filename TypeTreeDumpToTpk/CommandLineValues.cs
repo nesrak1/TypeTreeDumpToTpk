@@ -36,9 +36,9 @@ namespace TypeTreeDumpToTpk
         private static HashSet<string> VALID_COMMANDS = new HashSet<string>
         {
             "ttdtotpk",
+            "cldbtotpk",
             /*
             "ttdtocldb",
-            "cldbtotpk",
             "addcldbtotpk"
             */
         };
@@ -336,6 +336,8 @@ namespace TypeTreeDumpToTpk
             Console.WriteLine("    show this screen");
             Console.WriteLine("  ttdtotpk:");
             Console.WriteLine("    convert entire ttd repo to tpk");
+            Console.WriteLine("  cldbtotpk:");
+            Console.WriteLine("    reruns ttdtotpk without rebuilding cldbs");
             /*
             Console.WriteLine("    runs ttdtocldb and cldbtotpk");
             Console.WriteLine("  ttdtocldb:");
